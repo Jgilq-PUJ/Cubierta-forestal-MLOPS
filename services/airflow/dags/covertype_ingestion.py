@@ -3,86 +3,34 @@
 Every 5 minutes the external Data API serves a random portion of its current
 batch (10 batches in total, one per 5-minute window). Each DAG run:
 
-    ensure_table  ->  fetch_batch  ->  store_batch
+    ensure_schema  ->  fetch_batch  ->  store_batch  ->  promote
 
-and appends that portion to ``covertype_raw`` so the table grows run after run.
+and appends that portion to ``raw.covertype`` (stage 1), then promotes the
+rows of this run into ``processed.covertype`` (stage 2: typed, normalised,
+deduplicated). Stage 3 (``training.*``) is built on demand by the
+``covertype_training_dataset`` DAG.
 
 Runtime settings (Airflow Variables, editable from the UI without a restart,
 useful if the Data API has to be redeployed somewhere else):
     data_api_url           default http://10.43.97.110:8080
-    data_api_group_number  default 1
+    data_api_group_number  default 6
 """
 
 from __future__ import annotations
 
-import os
 from datetime import timedelta
 
 import pendulum
-import psycopg2
 import requests
-from psycopg2.extras import execute_values
-
-from airflow.exceptions import AirflowSkipException
 from airflow.sdk import Variable, dag, task
+from airflow.sdk.exceptions import AirflowSkipException
+
+from covertype_pipeline.db import connect
+from covertype_pipeline.schema import CREATE_SCHEMA_SQL, RAW_TABLE
+from covertype_pipeline.stages import promote_processed, store_rows
 
 DEFAULT_DATA_API_URL = "http://10.43.97.110:8080"
 DEFAULT_GROUP_NUMBER = 6
-TABLE = "covertype_raw"
-
-# Order of the values in every row returned by /data
-COLUMNS = [
-    "elevation",
-    "aspect",
-    "slope",
-    "horizontal_distance_to_hydrology",
-    "vertical_distance_to_hydrology",
-    "horizontal_distance_to_roadways",
-    "hillshade_9am",
-    "hillshade_noon",
-    "hillshade_3pm",
-    "horizontal_distance_to_fire_points",
-    "wilderness_area",
-    "soil_type",
-    "cover_type",
-]
-TEXT_COLUMNS = {"wilderness_area", "soil_type"}
-
-CREATE_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {TABLE} (
-    id                                 BIGSERIAL PRIMARY KEY,
-    elevation                          INTEGER NOT NULL,
-    aspect                             INTEGER NOT NULL,
-    slope                              INTEGER NOT NULL,
-    horizontal_distance_to_hydrology   INTEGER NOT NULL,
-    vertical_distance_to_hydrology     INTEGER NOT NULL,
-    horizontal_distance_to_roadways    INTEGER NOT NULL,
-    hillshade_9am                      INTEGER NOT NULL,
-    hillshade_noon                     INTEGER NOT NULL,
-    hillshade_3pm                      INTEGER NOT NULL,
-    horizontal_distance_to_fire_points INTEGER NOT NULL,
-    wilderness_area                    TEXT    NOT NULL,
-    soil_type                          TEXT    NOT NULL,
-    cover_type                         INTEGER NOT NULL,
-    group_number                       INTEGER NOT NULL,
-    batch_number                       INTEGER NOT NULL,
-    dag_run_id                         TEXT    NOT NULL,
-    ingested_at                        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS {TABLE}_batch_idx ON {TABLE} (group_number, batch_number);
-CREATE INDEX IF NOT EXISTS {TABLE}_run_idx ON {TABLE} (dag_run_id);
-"""
-
-
-def _connect():
-    """Connection to the s3 business database (env set in docker-compose)."""
-    return psycopg2.connect(
-        host=os.environ["DATA_DB_HOST"],
-        port=os.environ.get("DATA_DB_PORT", "5432"),
-        dbname=os.environ["DATA_DB_NAME"],
-        user=os.environ["DATA_DB_USER"],
-        password=os.environ["DATA_DB_PASSWORD"],
-    )
 
 
 @dag(
@@ -107,9 +55,9 @@ def _connect():
 )
 def covertype_ingestion():
     @task
-    def ensure_table() -> None:
-        with _connect() as conn, conn.cursor() as cur:
-            cur.execute(CREATE_TABLE_SQL)
+    def ensure_schema() -> None:
+        with connect() as conn, conn.cursor() as cur:
+            cur.execute(CREATE_SCHEMA_SQL)
 
     @task
     def fetch_batch() -> dict:
@@ -136,34 +84,24 @@ def covertype_ingestion():
         return payload
 
     @task
-    def store_batch(payload: dict, dag_run=None) -> int:
+    def store_batch(payload: dict, dag_run=None) -> str:
         run_id = dag_run.run_id
-        records = []
-        for row in payload["data"]:
-            if len(row) != len(COLUMNS):
-                raise ValueError(f"Expected {len(COLUMNS)} values, got {len(row)}: {row}")
-            values = [
-                value if column in TEXT_COLUMNS else int(value)
-                for column, value in zip(COLUMNS, row)
-            ]
-            records.append((*values, payload["group_number"], payload["batch_number"], run_id))
+        with connect() as conn:
+            inserted = store_rows(conn, payload, run_id)
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT count(*) FROM {RAW_TABLE}")
+                total = cur.fetchone()[0]
+        print(f"inserted={inserted} batch={payload['batch_number']} total_rows={total}")
+        return run_id
 
-        insert_sql = (
-            f"INSERT INTO {TABLE} ({', '.join(COLUMNS)}, group_number, batch_number, dag_run_id) "
-            "VALUES %s"
-        )
-        # One transaction: delete-then-insert by run id keeps retries/re-runs
-        # idempotent while every new run keeps accumulating rows.
-        with _connect() as conn, conn.cursor() as cur:
-            cur.execute(f"DELETE FROM {TABLE} WHERE dag_run_id = %s", (run_id,))
-            execute_values(cur, insert_sql, records)
-            cur.execute(f"SELECT count(*) FROM {TABLE}")
-            total = cur.fetchone()[0]
+    @task
+    def promote(run_id: str) -> dict:
+        with connect() as conn:
+            stats = promote_processed(conn, run_id)
+        print(f"processed run={run_id} {stats}")
+        return stats
 
-        print(f"inserted={len(records)} batch={payload['batch_number']} total_rows={total}")
-        return len(records)
-
-    ensure_table() >> store_batch(fetch_batch())
+    promote(ensure_schema() >> store_batch(fetch_batch()))
 
 
 covertype_ingestion()
