@@ -17,32 +17,32 @@
 name: cubierta-forestal
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:${AIRFLOW_VERSION:-3.3.2}
+  image: apache/airflow:3.3.2
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@airflow-db:5432/${AIRFLOW_DB_NAME:-airflow}
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: ""
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-change-me-jwt-secret}
+    AIRFLOW__API_AUTH__JWT_SECRET: change-me-jwt-secret
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # s1 · external Data API, reached through the VPN of the host
-    DATA_API_URL: ${DATA_API_URL:?set DATA_API_URL in .env}
-    DATA_API_TOKEN: ${DATA_API_TOKEN:-}
+    DATA_API_URL: http://data-api.example.internal
+    DATA_API_TOKEN: ""
     # s3 · project database the DAGs write into
     DATA_DB_HOST: postgres
     DATA_DB_PORT: "5432"
-    DATA_DB_NAME: ${DATA_DB_NAME:-cubierta_forestal}
-    DATA_DB_USER: ${DATA_DB_USER:-app}
-    DATA_DB_PASSWORD: ${DATA_DB_PASSWORD:-app}
+    DATA_DB_NAME: cubierta_forestal
+    DATA_DB_USER: app
+    DATA_DB_PASSWORD: app
   volumes:
     - ./services/airflow/dags:/opt/airflow/dags
     - ./services/airflow/logs:/opt/airflow/logs
     - ./services/airflow/plugins:/opt/airflow/plugins
     - ./services/airflow/config:/opt/airflow/config
-  user: "${AIRFLOW_UID:-50000}:0"
+  user: "50000:0"
   depends_on: &airflow-common-depends-on
     airflow-db:
       condition: service_healthy
@@ -57,17 +57,17 @@ services:
     image: postgres:16
     container_name: cf-postgres
     environment:
-      POSTGRES_DB: ${DATA_DB_NAME:-cubierta_forestal}
-      POSTGRES_USER: ${DATA_DB_USER:-app}
-      POSTGRES_PASSWORD: ${DATA_DB_PASSWORD:-app}
+      POSTGRES_DB: cubierta_forestal
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Optional schema/seed .sql files, applied once on an empty volume
       - ./services/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${DATA_DB_USER:-app}", "-d", "${DATA_DB_NAME:-cubierta_forestal}"]
+      test: ["CMD", "pg_isready", "-U", "app", "-d", "cubierta_forestal"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -81,13 +81,13 @@ services:
     image: postgres:16
     container_name: cf-airflow-db
     environment:
-      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
-      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
     volumes:
       - airflow-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_DB_USER:-airflow}", "-d", "${AIRFLOW_DB_NAME:-airflow}"]
+      test: ["CMD", "pg_isready", "-U", "airflow", "-d", "airflow"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -105,14 +105,14 @@ services:
       - -c
       - |
         mkdir -p /opt/airflow/{logs,dags,plugins,config}
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins,config}
+        chown -R "50000:0" /opt/airflow/{logs,dags,plugins,config}
         exec /entrypoint airflow version
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
-      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_USERNAME: airflow
+      _AIRFLOW_WWW_USER_PASSWORD: airflow
     user: "0:0"
 
   airflow-apiserver:
@@ -120,7 +120,7 @@ services:
     container_name: cf-airflow-apiserver
     command: api-server
     ports:
-      - "${AIRFLOW_PORT:-8080}:8080"
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
@@ -190,16 +190,16 @@ services:
   # course stack; plan a migration (SeaweedFS, Garage) before any real deploy.
   # ------------------------------------------------------------------------- #
   minio:
-    image: bitnamilegacy/minio:${MINIO_VERSION:-2025.7.23-debian-12-r5}
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
     container_name: cf-minio
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
       # Buckets created on first start, so Jupyter can publish right away
-      MINIO_DEFAULT_BUCKETS: ${MODELS_BUCKET:-models}
+      MINIO_DEFAULT_BUCKETS: models
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio-data:/bitnami/minio/data
     healthcheck:
@@ -220,18 +220,18 @@ services:
     image: cubierta-forestal-jupyter:0.1.0
     container_name: cf-jupyter
     ports:
-      - "${JUPYTER_PORT:-8888}:8888"
+      - "8888:8888"
     environment:
-      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-cubierta}
+      JUPYTER_TOKEN: cubierta
       DATA_DB_HOST: postgres
       DATA_DB_PORT: "5432"
-      DATA_DB_NAME: ${DATA_DB_NAME:-cubierta_forestal}
-      DATA_DB_USER: ${DATA_DB_USER:-app}
-      DATA_DB_PASSWORD: ${DATA_DB_PASSWORD:-app}
+      DATA_DB_NAME: cubierta_forestal
+      DATA_DB_USER: app
+      DATA_DB_PASSWORD: app
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MODELS_BUCKET: ${MODELS_BUCKET:-models}
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MODELS_BUCKET: models
     volumes:
       # Bind mounts to iterate without rebuilding the image
       - ./services/jupyter/notebooks:/workspace/notebooks
@@ -255,13 +255,13 @@ services:
     image: cubierta-forestal-api:0.1.0
     container_name: cf-inference-api
     ports:
-      - "${INFERENCE_API_PORT:-8000}:8000"
+      - "8000:8000"
     environment:
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MODELS_BUCKET: ${MODELS_BUCKET:-models}
-      MODEL_NAME: ${MODEL_NAME:-cubierta-forestal}
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MODELS_BUCKET: models
+      MODEL_NAME: cubierta-forestal
     depends_on:
       minio:
         condition: service_healthy
