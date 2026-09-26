@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from cubierta_forestal.infrastructure.api.routers import inference
+from inference_api.routers import inference
 
 app = FastAPI(title="Cubierta Forestal · Inference API", version="0.1.0")
 

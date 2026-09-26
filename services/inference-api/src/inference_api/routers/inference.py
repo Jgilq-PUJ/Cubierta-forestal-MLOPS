@@ -5,7 +5,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from cubierta_forestal.infrastructure import minio_client
+from inference_api.infrastructure import minio_client
 
 router = APIRouter(tags=["inference"])
 

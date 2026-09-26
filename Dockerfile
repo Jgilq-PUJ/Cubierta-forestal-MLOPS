@@ -1,6 +1,6 @@
 # One Dockerfile, two targets: `jupyter` (training) and `api` (inference).
 #
-# Both targets install from the SAME cubierta-forestal/pyproject.toml + uv.lock,
+# Both targets install from the SAME services/inference-api/pyproject.toml + uv.lock,
 # so the scikit-learn version that serialises a model in Jupyter is exactly the
 # one that deserialises it in the Inference API.
 #
@@ -17,7 +17,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
 WORKDIR /app
-COPY cubierta-forestal/pyproject.toml cubierta-forestal/uv.lock ./
+COPY services/inference-api/pyproject.toml services/inference-api/uv.lock ./
 
 # --------------------------------------------------------------------------- #
 # Dependencies (one venv per target, resolved from the same lockfile)
@@ -44,7 +44,7 @@ RUN groupadd -g 1000 app && useradd -u 1000 -g 1000 -m -s /bin/bash app
 
 WORKDIR /app
 COPY --from=deps-api /app/.venv /app/.venv
-COPY cubierta-forestal/src/ /app/src/
+COPY services/inference-api/src/ /app/src/
 
 RUN chown -R 1000:1000 /app
 
@@ -54,7 +54,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=4)"
 
-CMD ["uvicorn", "cubierta_forestal.infrastructure.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "inference_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # --------------------------------------------------------------------------- #
 # Runtime · JupyterLab (s4, training)
@@ -76,8 +76,8 @@ COPY --from=uv-base /usr/local/bin/uv /usr/local/bin/uv
 
 WORKDIR /workspace
 COPY --from=deps-jupyter /app/.venv /app/.venv
-COPY cubierta-forestal/pyproject.toml cubierta-forestal/uv.lock /workspace/
-COPY cubierta-forestal/src/ /workspace/src/
+COPY services/inference-api/pyproject.toml services/inference-api/uv.lock /workspace/
+COPY services/inference-api/src/ /workspace/src/
 COPY services/jupyter/notebooks/ /workspace/notebooks/
 
 RUN chown -R 1000:1000 /workspace /app

@@ -250,9 +250,9 @@ services:
     volumes:
       # Bind mounts to iterate without rebuilding the image
       - ./services/jupyter/notebooks:/workspace/notebooks
-      - ./cubierta-forestal/src:/workspace/src
-      - ./cubierta-forestal/pyproject.toml:/workspace/pyproject.toml
-      - ./cubierta-forestal/uv.lock:/workspace/uv.lock
+      - ./services/inference-api/src:/workspace/src
+      - ./services/inference-api/pyproject.toml:/workspace/pyproject.toml
+      - ./services/inference-api/uv.lock:/workspace/uv.lock
     depends_on:
       postgres:
         condition: service_healthy

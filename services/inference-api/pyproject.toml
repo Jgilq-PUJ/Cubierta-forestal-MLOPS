@@ -1,7 +1,7 @@
 [project]
-name = "cubierta-forestal"
+name = "inference-api"
 version = "0.1.0"
-description = "Add your description here"
+description = "Inference API for the covertype model published in MinIO"
 readme = "README.md"
 authors = [
     { name = "Jgilq-PUJ", email = "giljorgea@gmail.com" }
@@ -15,9 +15,6 @@ dependencies = [
     "scikit-learn>=1.9.1",
     "sqlalchemy>=2.1.1",
 ]
-
-[project.scripts]
-cubierta-forestal = "cubierta_forestal:main"
 
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
