@@ -94,11 +94,13 @@ def covertype_ingestion():
         print(f"inserted={inserted} batch={payload['batch_number']} total_rows={total}")
         return run_id
 
+    # The argument is not called run_id: that name is a reserved context key
+    # and the SDK refuses to bind an XCom value to it.
     @task
-    def promote(run_id: str) -> dict:
+    def promote(ingestion_run_id: str) -> dict:
         with connect() as conn:
-            stats = promote_processed(conn, run_id)
-        print(f"processed run={run_id} {stats}")
+            stats = promote_processed(conn, ingestion_run_id)
+        print(f"processed run={ingestion_run_id} {stats}")
         return stats
 
     promote(ensure_schema() >> store_batch(fetch_batch()))

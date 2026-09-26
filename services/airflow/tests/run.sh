@@ -20,4 +20,4 @@ docker run --rm --network "$NET" \
   -e DATA_DB_HOST="$PG" -e DATA_DB_PORT=5432 -e DATA_DB_NAME=cubierta_forestal \
   -e DATA_DB_USER=app -e DATA_DB_PASSWORD=app \
   -v "$ROOT/services/airflow:/opt/airflow/project:ro" -w /opt/airflow/project \
-  apache/airflow:3.3.2 python tests/test_covertype_pipeline.py
+  apache/airflow:3.3.2 bash -c "python tests/test_dag_integrity.py && python tests/test_covertype_pipeline.py"
