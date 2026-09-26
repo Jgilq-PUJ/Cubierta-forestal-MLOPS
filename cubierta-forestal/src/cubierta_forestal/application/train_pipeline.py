@@ -31,12 +31,29 @@ def run(
     limit: int | None = None,
     test_size: float = 0.2,
     random_state: int = 42,
+    stage: str = "processed",
 ) -> dict:
-    """Lee Postgres, entrena y publica el modelo. Devuelve un resumen."""
-    df = postgres_client.read_covertype(limit=limit)
+    """Lee Postgres, entrena y publica el modelo. Devuelve un resumen.
+
+    ``stage`` elige la etapa de datos de la que se entrena:
+        "processed" (por defecto) -> covertype_processed (limpia)
+        "raw"                     -> covertype_raw (sin procesar)
+    Si la etapa procesada aun no tiene filas, cae a la cruda automaticamente.
+    """
+    if stage == "raw":
+        df = postgres_client.read_covertype(limit=limit)
+        source = postgres_client.RAW_TABLE
+    else:
+        df = postgres_client.read_processed(limit=limit)
+        source = postgres_client.PROCESSED_TABLE
+        if df.empty:
+            # El DAG puede no haber poblado 'processed' todavia: usar raw.
+            df = postgres_client.read_covertype(limit=limit)
+            source = postgres_client.RAW_TABLE
+
     if df.empty:
         raise RuntimeError(
-            f"La tabla '{postgres_client.RAW_TABLE}' esta vacia: "
+            f"La tabla '{source}' esta vacia: "
             "espera a que el DAG de Airflow ingiera datos antes de entrenar."
         )
 
@@ -50,6 +67,7 @@ def run(
     )
 
     summary = {
+        "source": source,
         "rows_read": int(len(df)),
         "metrics": trained.metrics,
         "published": published,
@@ -60,6 +78,7 @@ def run(
 def main() -> None:
     summary = run()
     print("Entrenamiento completado:")
+    print(f"  fuente       : {summary['source']}")
     print(f"  filas leidas : {summary['rows_read']}")
     print(f"  accuracy     : {summary['metrics']['accuracy']:.4f}")
     print(f"  f1_macro     : {summary['metrics']['f1_macro']:.4f}")

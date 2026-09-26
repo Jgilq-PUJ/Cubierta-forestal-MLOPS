@@ -16,7 +16,10 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-RAW_TABLE = "covertype_raw"
+# Las tres etapas de datos que expone PostgreSQL (requisito del proyecto).
+RAW_TABLE = "covertype_raw"              # sin procesar
+PROCESSED_TABLE = "covertype_processed"  # procesada (limpia + deduplicada)
+TRAINING_VIEW = "covertype_training"     # lista para entrenamiento (numerica)
 
 
 def database_url() -> str:
@@ -34,21 +37,18 @@ def get_engine() -> Engine:
     return create_engine(database_url(), pool_pre_ping=True)
 
 
-def read_covertype(
+def _read_table(
+    table: str,
     limit: int | None = None,
     engine: Engine | None = None,
 ) -> pd.DataFrame:
-    """Devuelve las filas de ``covertype_raw`` como ``DataFrame``.
-
-    Args:
-        limit: si se indica, trae solo las ``limit`` filas mas recientes.
-        engine: engine ya creado (util en pruebas); si es ``None`` se crea uno.
-    """
+    """Lee una tabla/vista como ``DataFrame`` (helper interno)."""
     own_engine = engine is None
     engine = engine or get_engine()
-    query = f"SELECT * FROM {RAW_TABLE} ORDER BY id"
     if limit is not None:
-        query = f"SELECT * FROM {RAW_TABLE} ORDER BY id DESC LIMIT {int(limit)}"
+        query = f"SELECT * FROM {table} ORDER BY 1 DESC LIMIT {int(limit)}"
+    else:
+        query = f"SELECT * FROM {table}"
     try:
         with engine.connect() as conn:
             df = pd.read_sql(text(query), conn)
@@ -56,3 +56,35 @@ def read_covertype(
         if own_engine:
             engine.dispose()
     return df
+
+
+def read_covertype(
+    limit: int | None = None,
+    engine: Engine | None = None,
+) -> pd.DataFrame:
+    """Etapa 1 · sin procesar: filas crudas de ``covertype_raw``."""
+    return _read_table(RAW_TABLE, limit=limit, engine=engine)
+
+
+def read_processed(
+    limit: int | None = None,
+    engine: Engine | None = None,
+) -> pd.DataFrame:
+    """Etapa 2 · procesada: filas limpias/deduplicadas de ``covertype_processed``.
+
+    Es la fuente recomendada para entrenar: mantiene las categoricas como texto
+    para que el ``Pipeline`` haga el encoding y guarde el mapeo en los metadatos.
+    """
+    return _read_table(PROCESSED_TABLE, limit=limit, engine=engine)
+
+
+def read_training(
+    limit: int | None = None,
+    engine: Engine | None = None,
+) -> pd.DataFrame:
+    """Etapa 3 · lista para entrenamiento: matriz numerica de ``covertype_training``.
+
+    Las categoricas ya vienen como codigos enteros (``*_code``); util para
+    inspeccionar el vector exacto que consume la Inference API.
+    """
+    return _read_table(TRAINING_VIEW, limit=limit, engine=engine)

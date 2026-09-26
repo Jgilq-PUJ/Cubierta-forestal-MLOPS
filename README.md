@@ -8,7 +8,7 @@ con un unico `docker-compose`.
 
 ```
 s1 Data API (externa, via VPN)  --->  s2 Airflow
-s2 Airflow                     <--->  s3 PostgreSQL        (tabla covertype_raw)
+s2 Airflow                     <--->  s3 PostgreSQL        (raw -> processed -> training)
 s3 PostgreSQL                   --->  s4 Jupyter           (entrenamiento)
 s4 Jupyter                      --->  s5 MinIO             (registro de modelos)
 s5 MinIO                        --->  s6 Inference API     (sirve el modelo)
@@ -18,10 +18,25 @@ s5 MinIO                        --->  s6 Inference API     (sirve el modelo)
 |----------|-----|--------|----------------|
 | **s1** Data API | API externa del dataset (fuera del compose, se alcanza por VPN) | — | consumida por el DAG |
 | **s2** Airflow | Ingesta incremental cada 5 min | 8080 | `services/airflow/dags/covertype_ingestion.py` |
-| **s3** PostgreSQL | Base de negocio con `covertype_raw` | 5432 | servicio `postgres` |
+| **s3** PostgreSQL | Base de negocio con 3 etapas de datos | 5432 | servicio `postgres` |
 | **s4** Jupyter | Entrena y publica el modelo | 8888 | `services/jupyter/notebooks/train_covertype.ipynb` |
 | **s5** MinIO | Almacen de artefactos / modelos | 9000/9001 | servicio `minio`, bucket `models` |
 | **s6** Inference API | Sirve el modelo publicado | 8000 | `cubierta_forestal.infrastructure.api` |
+
+### Etapas de datos en PostgreSQL (s3)
+
+El enunciado exige que PostgreSQL tenga **multiples etapas** (sin procesar,
+procesada y lista para entrenamiento). El DAG las alimenta en **una sola
+ejecucion por peticion**:
+
+| Etapa | Objeto | Contenido | Lo produce |
+|-------|--------|-----------|------------|
+| sin procesar | `covertype_raw` (tabla) | filas crudas tal como llegan de la Data API, con metadatos (`group_number`, `batch_number`, `dag_run_id`) | tarea `store_raw` |
+| procesada | `covertype_processed` (tabla) | filas limpias, tipadas y **deduplicadas** (`row_hash` UNIQUE); descarta `cover_type` fuera de 1..7 y categoricas vacias | tarea `process_batch` |
+| lista para entrenamiento | `covertype_training` (vista) | matriz **numerica**: 10 features + `wilderness_area_code` + `soil_type_code` + `cover_type` (codigos 0-based estables, iguales a los del modelo) | vista sobre `covertype_processed` |
+
+Jupyter entrena desde `covertype_processed` (mantiene las categoricas como texto
+para que el `Pipeline` haga el encoding y guarde el mapeo en los metadatos).
 
 El paquete `cubierta-forestal` (en `cubierta-forestal/`) sigue una estructura
 hexagonal y es compartido por Jupyter (s4) y la Inference API (s6). Ambos se
@@ -38,8 +53,8 @@ docker compose up -d
 ```
 
 1. **Airflow (s2)** — http://localhost:8080 (`airflow` / `airflow`). Activa el DAG
-   `covertype_ingestion`; cada 5 minutos agrega una porcion del batch actual a
-   `covertype_raw` en Postgres (s3).
+   `covertype_ingestion`; cada 5 minutos hace **una** peticion a la Data API y, en
+   esa misma ejecucion, alimenta las 3 etapas de Postgres (raw -> processed).
 2. **Jupyter (s4)** — http://localhost:8888 (token `cubierta`). Abre
    `notebooks/train_covertype.ipynb` y ejecutalo: lee Postgres, entrena un
    `RandomForestClassifier` y publica el modelo en MinIO (s5).
@@ -53,7 +68,8 @@ docker compose up -d
 El notebook es una capa fina sobre el paquete; la logica reutilizable vive en:
 
 - `application/training.py` — entrenamiento puro (features, encoding, metricas).
-- `infrastructure/postgres_client.py` — lectura de `covertype_raw` (s3).
+- `infrastructure/postgres_client.py` — lectura de las 3 etapas: `read_covertype()`
+  (raw), `read_processed()` (procesada, la que se entrena) y `read_training()` (vista numerica).
 - `infrastructure/minio_client.py` — `publish_model()` (s4→s5) y `load_model()` (s5→s6).
 - `application/train_pipeline.py` — orquesta leer → entrenar → publicar:
 
@@ -61,6 +77,16 @@ El notebook es una capa fina sobre el paquete; la logica reutilizable vive en:
 # Dentro del contenedor de Jupyter (o cualquier entorno con el paquete):
 python -m cubierta_forestal.application.train_pipeline
 ```
+
+> Si ya tenias filas en `covertype_raw` de una version anterior, deja correr el
+> DAG unos ciclos para poblar `covertype_processed`, o rellena una sola vez con:
+> ```sql
+> INSERT INTO covertype_processed (elevation, aspect, slope, horizontal_distance_to_hydrology, vertical_distance_to_hydrology, horizontal_distance_to_roadways, hillshade_9am, hillshade_noon, hillshade_3pm, horizontal_distance_to_fire_points, wilderness_area, soil_type, cover_type, batch_number, row_hash)
+> SELECT elevation, aspect, slope, horizontal_distance_to_hydrology, vertical_distance_to_hydrology, horizontal_distance_to_roadways, hillshade_9am, hillshade_noon, hillshade_3pm, horizontal_distance_to_fire_points, wilderness_area, soil_type, cover_type, batch_number,
+>        md5(concat_ws('|', elevation, aspect, slope, horizontal_distance_to_hydrology, vertical_distance_to_hydrology, horizontal_distance_to_roadways, hillshade_9am, hillshade_noon, hillshade_3pm, horizontal_distance_to_fire_points, wilderness_area, soil_type, cover_type))
+> FROM covertype_raw WHERE cover_type BETWEEN 1 AND 7 AND wilderness_area <> '' AND soil_type <> ''
+> ON CONFLICT (row_hash) DO NOTHING;
+> ```
 
 ## Inference API (s6)
 

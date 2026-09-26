@@ -1,16 +1,24 @@
 """s1 Data API -> s3 PostgreSQL · incremental ingestion of the covertype dataset.
 
 Every 5 minutes the external Data API serves a random portion of its current
-batch (10 batches in total, one per 5-minute window). Each DAG run:
+batch (10 batches in total, one per 5-minute window). Each DAG run does the
+WHOLE process for exactly ONE request (the project forbids N requests per run):
 
-    ensure_table  ->  fetch_batch  ->  store_batch
+    ensure_tables  ->  fetch_batch  ->  store_raw  ->  process_batch
 
-and appends that portion to ``covertype_raw`` so the table grows run after run.
+populating the three data stages PostgreSQL must expose (project requirement:
+"debe tener multiples etapas, almacenando informacion sin procesar, procesada y
+lista para entrenamiento"):
+
+    covertype_raw       (sin procesar)  raw rows exactly as the API returns them
+    covertype_processed (procesada)     cleaned + typed + deduplicated rows
+    covertype_training  (entrenamiento) VIEW with the all-numeric feature matrix
+                                        (categoricals encoded) ready for Jupyter
 
 Runtime settings (Airflow Variables, editable from the UI without a restart,
 useful if the Data API has to be redeployed somewhere else):
     data_api_url           default http://10.43.97.110:8080
-    data_api_group_number  default 1
+    data_api_group_number  default 6
 """
 
 from __future__ import annotations
@@ -28,7 +36,11 @@ from airflow.sdk import Variable, dag, task
 
 DEFAULT_DATA_API_URL = "http://10.43.97.110:8080"
 DEFAULT_GROUP_NUMBER = 6
-TABLE = "covertype_raw"
+
+# The three data stages the project requires PostgreSQL to expose.
+TABLE = "covertype_raw"              # sin procesar
+PROCESSED_TABLE = "covertype_processed"  # procesada
+TRAINING_VIEW = "covertype_training"     # lista para entrenamiento
 
 # Order of the values in every row returned by /data
 COLUMNS = [
@@ -73,6 +85,74 @@ CREATE INDEX IF NOT EXISTS {TABLE}_batch_idx ON {TABLE} (group_number, batch_num
 CREATE INDEX IF NOT EXISTS {TABLE}_run_idx ON {TABLE} (dag_run_id);
 """
 
+# Stage 2 · procesada: cleaned, typed and deduplicated rows. A UNIQUE row_hash
+# drops exact-duplicate feature vectors across runs (ON CONFLICT DO NOTHING).
+CREATE_PROCESSED_SQL = f"""
+CREATE TABLE IF NOT EXISTS {PROCESSED_TABLE} (
+    id                                 BIGSERIAL PRIMARY KEY,
+    elevation                          INTEGER NOT NULL,
+    aspect                             INTEGER NOT NULL,
+    slope                              INTEGER NOT NULL,
+    horizontal_distance_to_hydrology   INTEGER NOT NULL,
+    vertical_distance_to_hydrology     INTEGER NOT NULL,
+    horizontal_distance_to_roadways    INTEGER NOT NULL,
+    hillshade_9am                      INTEGER NOT NULL,
+    hillshade_noon                     INTEGER NOT NULL,
+    hillshade_3pm                      INTEGER NOT NULL,
+    horizontal_distance_to_fire_points INTEGER NOT NULL,
+    wilderness_area                    TEXT    NOT NULL,
+    soil_type                          TEXT    NOT NULL,
+    cover_type                         INTEGER NOT NULL CHECK (cover_type BETWEEN 1 AND 7),
+    batch_number                       INTEGER NOT NULL,
+    row_hash                           TEXT    NOT NULL UNIQUE,
+    processed_at                       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS {PROCESSED_TABLE}_batch_idx ON {PROCESSED_TABLE} (batch_number);
+"""
+
+# Feature columns fed to the model, in the exact order the Inference API expects.
+FEATURE_COLUMNS = [c for c in COLUMNS if c != "cover_type" and c not in TEXT_COLUMNS]
+
+# Stage 3 · lista para entrenamiento: all-numeric feature matrix + target.
+# The two categoricals become 0-based integer codes over the whole processed
+# table (dense_rank over the sorted distinct values) so the encoding is stable
+# and identical to what training.build_feature_matrix produces (sorted -> index).
+CREATE_TRAINING_VIEW_SQL = f"""
+CREATE OR REPLACE VIEW {TRAINING_VIEW} AS
+WITH wa AS (
+    SELECT wilderness_area,
+           dense_rank() OVER (ORDER BY wilderness_area) - 1 AS code
+    FROM (SELECT DISTINCT wilderness_area FROM {PROCESSED_TABLE}) s
+),
+st AS (
+    SELECT soil_type,
+           dense_rank() OVER (ORDER BY soil_type) - 1 AS code
+    FROM (SELECT DISTINCT soil_type FROM {PROCESSED_TABLE}) s
+)
+SELECT p.{', p.'.join(FEATURE_COLUMNS)},
+       wa.code AS wilderness_area_code,
+       st.code AS soil_type_code,
+       p.cover_type
+FROM {PROCESSED_TABLE} p
+JOIN wa ON p.wilderness_area = wa.wilderness_area
+JOIN st ON p.soil_type = st.soil_type;
+"""
+
+# INSERT ... SELECT that promotes one run's raw rows into the processed stage.
+_HASH_EXPR = "md5(concat_ws('|', " + ", ".join(COLUMNS) + "))"
+PROCESS_SQL = f"""
+INSERT INTO {PROCESSED_TABLE} (
+    {', '.join(COLUMNS)}, batch_number, row_hash
+)
+SELECT {', '.join(COLUMNS)}, batch_number, {_HASH_EXPR}
+FROM {TABLE}
+WHERE dag_run_id = %s
+  AND cover_type BETWEEN 1 AND 7
+  AND wilderness_area <> ''
+  AND soil_type <> ''
+ON CONFLICT (row_hash) DO NOTHING;
+"""
+
 
 def _connect():
     """Connection to the s3 business database (env set in docker-compose)."""
@@ -107,9 +187,12 @@ def _connect():
 )
 def covertype_ingestion():
     @task
-    def ensure_table() -> None:
+    def ensure_tables() -> None:
+        """Create the three data stages (raw table, processed table, training view)."""
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(CREATE_TABLE_SQL)
+            cur.execute(CREATE_PROCESSED_SQL)
+            cur.execute(CREATE_TRAINING_VIEW_SQL)
 
     @task
     def fetch_batch() -> dict:
@@ -136,7 +219,8 @@ def covertype_ingestion():
         return payload
 
     @task
-    def store_batch(payload: dict, dag_run=None) -> int:
+    def store_raw(payload: dict, dag_run=None) -> str:
+        """Stage 1 · sin procesar: append this run's portion to covertype_raw."""
         run_id = dag_run.run_id
         records = []
         for row in payload["data"]:
@@ -160,10 +244,29 @@ def covertype_ingestion():
             cur.execute(f"SELECT count(*) FROM {TABLE}")
             total = cur.fetchone()[0]
 
-        print(f"inserted={len(records)} batch={payload['batch_number']} total_rows={total}")
-        return len(records)
+        print(f"raw inserted={len(records)} batch={payload['batch_number']} total_raw={total}")
+        return run_id
 
-    ensure_table() >> store_batch(fetch_batch())
+    @task
+    def process_batch(run_id: str) -> int:
+        """Stage 2 · procesada: clean + dedup this run's raw rows into the processed table.
+
+        Same DAG run, no extra API request: only transforms what store_raw wrote.
+        Invalid rows (bad cover_type or empty categoricals) are dropped and exact
+        duplicates are ignored via the UNIQUE row_hash.
+        """
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(PROCESS_SQL, (run_id,))
+            inserted = cur.rowcount
+            cur.execute(f"SELECT count(*) FROM {PROCESSED_TABLE}")
+            total = cur.fetchone()[0]
+            cur.execute(f"SELECT count(*) FROM {TRAINING_VIEW}")
+            trainable = cur.fetchone()[0]
+
+        print(f"processed new={inserted} total_processed={total} trainable_rows={trainable}")
+        return inserted
+
+    ensure_tables() >> process_batch(store_raw(fetch_batch()))
 
 
 covertype_ingestion()
