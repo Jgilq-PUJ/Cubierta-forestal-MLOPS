@@ -183,44 +183,32 @@ services:
 
   # ------------------------------------------------------------------------- #
   # s5 · MinIO (model registry / artifact store)
+  #
+  # MinIO deleted its public images from Docker Hub on 2026-09-11 and quay.io
+  # now answers 401. The Bitnami legacy build is the last pullable MinIO
+  # release: it is frozen and receives no security patches. Fine for a local
+  # course stack; plan a migration (SeaweedFS, Garage) before any real deploy.
   # ------------------------------------------------------------------------- #
   minio:
-    image: minio/minio:${MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
+    image: bitnamilegacy/minio:${MINIO_VERSION:-2025.7.23-debian-12-r5}
     container_name: cf-minio
-    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Buckets created on first start, so Jupyter can publish right away
+      MINIO_DEFAULT_BUCKETS: ${MODELS_BUCKET:-models}
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - minio-data:/data
+      - minio-data:/bitnami/minio/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
-
-  # One-shot: creates the models bucket so Jupyter can publish on first run
-  minio-init:
-    image: minio/mc:${MC_VERSION:-RELEASE.2025-04-16T18-13-26Z}
-    container_name: cf-minio-init
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "local/$$MODELS_BUCKET"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MODELS_BUCKET: ${MODELS_BUCKET:-models}
-    depends_on:
-      minio:
-        condition: service_healthy
 
   # ------------------------------------------------------------------------- #
   # s4 · Jupyter (training: reads Postgres, publishes models to MinIO)
@@ -253,8 +241,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
   # ------------------------------------------------------------------------- #
@@ -275,8 +263,8 @@ services:
       MODELS_BUCKET: ${MODELS_BUCKET:-models}
       MODEL_NAME: ${MODEL_NAME:-cubierta-forestal}
     depends_on:
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
