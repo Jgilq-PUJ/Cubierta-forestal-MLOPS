@@ -184,13 +184,11 @@ services:
   # ------------------------------------------------------------------------- #
   # s5 · MinIO (model registry / artifact store)
   #
-  # Official image from quay.io. If the pull fails with 401, the registry
-  # requires authentication (MinIO removed its public images in 2026-09);
-  # `bitnamilegacy/minio:2025.7.23-debian-12-r5` is a known pullable fallback
-  # that stores data in /bitnami/minio/data instead of /data.
+  # Chainguard build of MinIO (MinIO removed its own public images in 2026-09).
+  # Distroless-style image: runs as uid 65532, ships `minio` and `mc` only.
   # ------------------------------------------------------------------------- #
   minio:
-    image: quay.io/minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     container_name: cf-minio
     command: server /data --console-address ":9001"
     environment:
@@ -205,8 +203,8 @@ services:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # One-shot: the official image does not create buckets on start, so this
