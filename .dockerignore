@@ -1,0 +1,52 @@
+# Git
+.git/
+.gitignore
+
+# Docker files (never needed inside the image)
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# Virtual environments (dependencies are installed with uv during the build)
+**/.venv/
+**/venv/
+
+# Python caches at any depth (.dockerignore patterns without **/ only match at the root)
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Jupyter checkpoints (notebooks/ itself IS copied by the jupyter target)
+**/.ipynb_checkpoints
+
+# Tests and coverage
+cubierta-forestal/tests/
+.coverage
+htmlcov/
+
+# Services that run from official images or bind mounts, never baked in
+services/airflow/
+services/postgres/
+
+# Editors / IDEs / OS / tooling metadata
+.vscode/
+.idea/
+.DS_Store
+.atl/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Trained models live in MinIO, never inside the image
+**/*.pkl
+**/*.joblib
+**/*.onnx
+
+# Logs and docs
+**/*.log
+README.md
+docs/

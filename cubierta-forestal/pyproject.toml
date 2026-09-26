@@ -7,7 +7,14 @@ authors = [
     { name = "Jgilq-PUJ", email = "giljorgea@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "joblib>=1.6.0",
+    "minio>=7.2.20",
+    "pandas>=3.0.6",
+    "psycopg[binary]>=3.3.6",
+    "scikit-learn>=1.9.1",
+    "sqlalchemy>=2.1.1",
+]
 
 [project.scripts]
 cubierta-forestal = "cubierta_forestal:main"
@@ -15,3 +22,13 @@ cubierta-forestal = "cubierta_forestal:main"
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+api = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.54.0",
+]
+jupyter = [
+    "ipykernel>=7.3.0",
+    "jupyterlab>=4.6.4",
+]
