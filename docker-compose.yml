@@ -184,31 +184,48 @@ services:
   # ------------------------------------------------------------------------- #
   # s5 · MinIO (model registry / artifact store)
   #
-  # MinIO deleted its public images from Docker Hub on 2026-09-11 and quay.io
-  # now answers 401. The Bitnami legacy build is the last pullable MinIO
-  # release: it is frozen and receives no security patches. Fine for a local
-  # course stack; plan a migration (SeaweedFS, Garage) before any real deploy.
+  # Official image from quay.io. If the pull fails with 401, the registry
+  # requires authentication (MinIO removed its public images in 2026-09);
+  # `bitnamilegacy/minio:2025.7.23-debian-12-r5` is a known pullable fallback
+  # that stores data in /bitnami/minio/data instead of /data.
   # ------------------------------------------------------------------------- #
   minio:
-    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    image: quay.io/minio/minio:latest
     container_name: cf-minio
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      # Buckets created on first start, so Jupyter can publish right away
-      MINIO_DEFAULT_BUCKETS: models
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio-data:/bitnami/minio/data
+      - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
     restart: unless-stopped
+
+  # One-shot: the official image does not create buckets on start, so this
+  # reuses the already-built api image (it ships the minio client) to create
+  # the models bucket before Jupyter and the Inference API come up.
+  minio-init:
+    image: cubierta-forestal-api:0.1.0
+    container_name: cf-minio-init
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        from minio import Minio
+        client = Minio("minio:9000", "minioadmin", "minioadmin", secure=False)
+        if not client.bucket_exists("models"):
+            client.make_bucket("models")
+        print("bucket ready: models")
+    depends_on:
+      minio:
+        condition: service_healthy
 
   # ------------------------------------------------------------------------- #
   # s4 · Jupyter (training: reads Postgres, publishes models to MinIO)
@@ -241,8 +258,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ------------------------------------------------------------------------- #
@@ -263,8 +280,8 @@ services:
       MODELS_BUCKET: models
       MODEL_NAME: cubierta-forestal
     depends_on:
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
