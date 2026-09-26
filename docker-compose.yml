@@ -197,10 +197,6 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
-    labels:
-      # OrbStack: send https://minio.cubierta-forestal.orb.local to the
-      # web console instead of the S3 API (which answers 403 in a browser)
-      dev.orbstack.http-port: "9001"
     volumes:
       - minio-data:/data
     healthcheck:
