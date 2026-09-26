@@ -39,3 +39,7 @@ htmlcov/
 
 # Tooling
 .atl/
+
+# Airflow runtime logs (bind mount, written by the containers)
+services/airflow/logs/*
+!services/airflow/logs/.keep
