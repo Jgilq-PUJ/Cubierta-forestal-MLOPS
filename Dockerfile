@@ -38,14 +38,13 @@ FROM python:3.12-slim-bookworm AS api
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app/src:/app"
+    PYTHONPATH="/app/src"
 
 RUN groupadd -g 1000 app && useradd -u 1000 -g 1000 -m -s /bin/bash app
 
 WORKDIR /app
 COPY --from=deps-api /app/.venv /app/.venv
 COPY cubierta-forestal/src/ /app/src/
-COPY services/inference-api/app/ /app/app/
 
 RUN chown -R 1000:1000 /app
 
@@ -55,7 +54,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=4)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "cubierta_forestal.infrastructure.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # --------------------------------------------------------------------------- #
 # Runtime · JupyterLab (s4, training)
