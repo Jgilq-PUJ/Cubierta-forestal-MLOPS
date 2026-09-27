@@ -1,0 +1,4 @@
+# Generated at test time by conftest.py (see _ensure_fixture); not committed
+# because pickles are tied to the exact scikit-learn version in uv.lock.
+model.pickle
+metadata.json
