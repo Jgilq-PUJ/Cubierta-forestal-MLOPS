@@ -236,5 +236,6 @@ Bucket `models` con el artefacto `cubierta-forestal/1/20260926T183018Z/`: `model
 
 ### 7. Resultado de modelo de inferencia ejecutado en FastApi
 
-<img width="479" height="532" alt="7-inferencia-modelo-results" src="https://github.com/user-attachments/assets/099bd02b-55a6-477a-870f-78a2552e9019" />
+<img width="1135" height="559" alt="7-inferencia-modelo-results" src="https://github.com/user-attachments/assets/6c9fbca9-8753-46a0-b7ac-286b775d3157" />
+
 
