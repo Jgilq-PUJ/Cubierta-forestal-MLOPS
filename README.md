@@ -230,7 +230,7 @@ Bucket `models` con el artefacto `cubierta-forestal/1/20260926T183018Z/`: `model
 
 ![model.pickle y metadata.json en el bucket models de MinIO](docs/images/5-minio-storage.png)
 
-### 6. Version de modelo de inferencia ejecutando en FastApi
+### 6. Version de la base de datos para el modelo de inferencia
 
 <img width="951" height="546" alt="6-version-modelo-inferencia" src="https://github.com/user-attachments/assets/5f1c99be-4c94-4104-ba5d-ee714b922725" />
 
