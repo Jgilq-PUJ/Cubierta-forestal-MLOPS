@@ -229,3 +229,12 @@ Notebook en Jupyter con el `Pipeline` ajustado: `ColumnTransformer` con paso dir
 Bucket `models` con el artefacto `cubierta-forestal/1/20260926T183018Z/`: `model.pickle` y su `metadata.json`.
 
 ![model.pickle y metadata.json en el bucket models de MinIO](docs/images/5-minio-storage.png)
+
+### 6. Version de modelo de inferencia ejecutando en FastApi
+
+<img width="951" height="546" alt="6-version-modelo-inferencia" src="https://github.com/user-attachments/assets/5f1c99be-4c94-4104-ba5d-ee714b922725" />
+
+### 7. Resultado de modelo de inferencia ejecutado en FastApi
+
+<img width="479" height="532" alt="7-inferencia-modelo-results" src="https://github.com/user-attachments/assets/099bd02b-55a6-477a-870f-78a2552e9019" />
+
