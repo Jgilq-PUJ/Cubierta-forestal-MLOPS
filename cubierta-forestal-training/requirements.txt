@@ -1,0 +1,16 @@
+# Notebook autónomo de entrenamiento (25 configuraciones, AutoGluon · familia única LightGBM).
+# Instalar con:  pip install -r requirements.txt
+# (El notebook también instala lo que falte en su celda de bootstrap.)
+
+autogluon.tabular[lightgbm]>=1.1.0
+scikit-learn>=1.4.0      # métricas + fetch_covtype (fuente de datos de respaldo)
+pandas>=2.2.0
+numpy>=1.26.0
+pyarrow>=15.0.0          # results.parquet
+matplotlib>=3.8.0        # EDA / comparación (opcional)
+seaborn>=0.13.0          # EDA (opcional)
+
+# Sólo si vas a leer desde PostgreSQL (opcional; si no, se usa fetch_covtype):
+SQLAlchemy>=2.1.0
+psycopg[binary]>=3.1.0
+python-dotenv>=1.0.0
