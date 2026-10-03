@@ -43,3 +43,7 @@ htmlcov/
 # Airflow runtime logs (bind mount, written by the containers)
 services/airflow/logs/*
 !services/airflow/logs/.keep
+
+# Training-notebook artifacts (models, results, mlflow payloads generated at runtime)
+services/jupyter/notebooks/artifacts/
+AutogluonModels/
